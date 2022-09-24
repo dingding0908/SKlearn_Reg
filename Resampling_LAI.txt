@@ -1,0 +1,153 @@
+import rasterio
+from osgeo import gdal
+import numpy as np
+from osgeo import osr
+
+# 路径LAI
+file_imgname = 'LAI_img_0615_clip_1002.tif'
+imgpath = r'E:\Desktop\20220913-20220916-0919-0923\20220916-0921\Sklearn回归模型规整\训练数据\{}'.format(file_imgname)
+src0 = gdal.Open(imgpath)
+# 获取TIFF的范围信息
+extend = src0.GetGeoTransform()
+# 读取波段信息
+img = src0.GetRasterBand(1).ReadAsArray()
+
+# 路径GEE
+file_img1name = 'GEE_0615_clip_982.tif'
+imgpath1 = r'E:\Desktop\20220913-20220916-0919-0923\20220916-0921\Sklearn回归模型规整\训练数据\{}'.format(file_img1name)
+src1 = rasterio.open(imgpath1)
+rat = src1.read(1)
+
+
+# 获取输入tif文件的信息：地理空间坐标系、投影坐标系、栅格影像的大小相关信息
+def get_file_info(in_file_path):
+    '''根据指定的图像文件路径，以只读的方式打开图像。(仅 支持Tif格式)
+    :param
+    in_
+    file_
+    path: 输入的文件路径，月前仅支持tif(TIF)
+    格式的文件
+    :return: gdal数据集、地理空间坐标系、投影坐标系、栅格影像的大小相关信息
+    '''
+    pcs = None
+    gcs = None
+    shape = None
+    if in_file_path.endswith(".tif") or in_file_path.endswith(".TIF"):
+        dataset = gdal.Open(in_file_path)
+        pcs = osr.SpatialReference()
+        pcs.ImportFromNkt(dataset.GetProjection())
+        gcs = pcs.CloneGeogCs()
+        extend = dataset.GetGeoTransform()
+        shape = (dataset.Rasterxsize, dataset.RasterYSizeRasterysize)
+    else:
+        raise ("Unsupported file format!")
+        #
+    return dataset, gcs, pcs, extend, shape
+
+    # 根据GDAL的六参数模型将给定的投影坐标转为影像图上坐标(行列号)
+
+
+# 经纬度坐标转换为投影坐标
+def lonlat_to_xy(gcs, pcs, lon, lat):
+    '''经纬度坐标转换为投影坐标
+    :param gcs:
+    地理空间坐标信息，可由get_ file_ info ()函数获取
+    :param pcs:
+    投影坐标信息，可由get_ file_ info ()隔数获取
+    :param lon:经度坐标
+    :param lat:纬度坐标
+    :return:地理空间坐标对应的投影坐标
+    '''
+    ct = osr.CoordinateTransformation(gcs, pcs)
+    coordinates = ct.TransformPoint(lon, lat)
+    return coordinates[0], coordinates[1], coordinates[2]
+
+
+# 根据GDAL的六参数模型将给定的投影坐标转为影像图上坐标(行列号)
+def xy_to_rowcol(extend, x, y):
+    '''根据GDAL的六参数模型将给定的投影坐标转为影像图上坐标(行列号)
+    根据GDAL的六参数模型将给定的投影或地理坐标转为影像图上坐标(行列号)
+    :param extend: 图像的空间范围
+    :param x:投影坐标x
+    :param y:投影坐标y
+    :return:投影坐标(x, y)对应的影像图上行列号(row, col)
+'''
+    a = np.array([[extend[1], extend[2]], [extend[4], extend[5]]])
+    b = np.array([x - extend[0], y - extend[3]])
+    row_col = np.linalg.solve(a, b)  # 使用numpy的linalg. solve进行二 元一次 方程的求解
+    row = int(np.floor(row_col[1]))
+    col = int(np.floor(row_col[0]))
+    #
+    return row, col
+
+
+def get_value_by_coordinates(file_path, coordinates, coordinates_type="rowcol"):
+    '''
+    直接根据图像坐标，或者依据GDAL的六参数模型将给定的投影、地理坐标转为影像图上坐标后，返回对应像元的像元值
+    :param file_ path: 图像文件的路径
+    :param coordinates: 坐标，2 个元素的元组，坐标为如下三种中的种像 元的行列号、投影坐标或者地理空间坐标
+    :param coordinates type: 坐标类型，"rowcol"、 "xy"、 "lonlat"
+    :return:指定坐标的像元值dataset, gcs, pcs, extend, shape
+    '''
+    dataset, gcs, pcs, extend, shape = get_file_info(file_path)
+    img = dataset.GetRasterBand(1).ReadAsArray()
+    value = None
+    if coordinates_type == "rowcol":
+        value = img[coordinates[0], coordinates[1]]
+    elif coordinates.type == "lonlat":
+        x, y, _ = lonlat_to_xy(gcs, pcs, coordinates[0], coordinates[1])
+        row, col = xy_to_rowcol(extend, x, y)
+        value = img[row, col]
+    elif coordinates_type == "xy":
+        row, col = xy_to_rowcol(extend, coordinates[e], coordinates[1])
+        value = img[row, col]
+    else:
+        raise ('''coordinates_type" :Wrong parameters input''')
+    return value
+
+
+gdal.AllRegister()
+
+filepath = imgpath1
+dataset = gdal.Open(filepath)
+# extend1 = dataset.GetGeoTransform()
+adfGeoTransform = dataset.GetGeoTransform()
+
+# 左上角地理坐标
+print(adfGeoTransform[0])
+print(adfGeoTransform[3])
+
+nXSize = dataset.RasterXSize  # 列数
+nYSize = dataset.RasterYSize  # 行数
+print(nXSize)
+print(nYSize)
+
+arrSlope = []  # 用于存储每个像素的（X，Y）坐标
+raster = np.zeros((rat.shape[0], rat.shape[1]))
+for i in range(nYSize):
+    row = []
+    for j in range(nXSize):
+        px = adfGeoTransform[0] + i * adfGeoTransform[1] + j * adfGeoTransform[2]
+        py = adfGeoTransform[3] + i * adfGeoTransform[4] + j * adfGeoTransform[5]
+        row, col = xy_to_rowcol(extend, px, py)
+        raster[j, i] = img[row, col]
+
+# 重采样LAI数据，命名LAI_img_0814_clip_982.tif
+
+driver = gdal.GetDriverByName('GTiff')
+dst_filename = 'LAI_img_0615_clip_982.tif'
+dst_filepath = r'E:\Desktop\20220913-20220916-0919-0923\20220916-0921\Sklearn回归模型规整\重采样LAI数据\{}'.format(dst_filename)
+dst_ds = driver.Create(dst_filepath, rat.shape[0], rat.shape[1], 1, gdal.GDT_Float32)
+dst_ds.SetGeoTransform(adfGeoTransform)
+srs = osr.SpatialReference()
+srs.SetProjection(dataset.GetProjection())
+dst_ds.GetRasterBand(1).WriteArray(raster)
+def Resampl(GEE_path,LAI_path,Out_LAI_path):
+    '''
+    
+    :param GEE_path: 输入GEE栅格数据，投影过的
+    :param LAI_path: 输入LAI栅格数据
+    :param Out_LAI_path: 输出重采样后的数据
+    :return: 
+    '''
+    
